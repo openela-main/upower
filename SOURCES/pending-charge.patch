@@ -1,0 +1,338 @@
+From 91e9ccf69394d3c005f0386e92c8a84c158aa0c7 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Jo=C3=A3o=20Paulo=20Rechi=20Vita?= <jprvita@endlessm.com>
+Date: Thu, 1 Nov 2018 14:45:28 -0700
+Subject: [PATCH 1/7] daemon: Make comment more succinct
+
+This will help make it more clear when adding an extra state on the
+following commit. It also makes the language consistent between the
+different lines. There are no changes on the meaning of these lines nor
+any functional changes on this commit.
+---
+ src/up-daemon.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/src/up-daemon.c b/src/up-daemon.c
+index 1a5dddc..95fff6b 100644
+--- a/src/up-daemon.c
++++ b/src/up-daemon.c
+@@ -209,9 +209,9 @@ up_daemon_update_display_battery (UpDaemon *daemon)
+ 		    power_supply == FALSE)
+ 			continue;
+ 
+-		/* If one battery is charging, then the composite is charging
+-		 * If all batteries are discharging, then the composite is discharging
+-		 * If all batteries are fully charged, then they're all fully charged
++		/* If one battery is charging, the composite is charging
++		 * If all batteries are discharging, the composite is discharging
++		 * If all batteries are fully charged, the composite is fully charged
+ 		 * Everything else is unknown */
+ 		if (state == UP_DEVICE_STATE_CHARGING)
+ 			state_total = UP_DEVICE_STATE_CHARGING;
+-- 
+2.38.1
+
+
+From dc2de4e321c34e62a784ac6d9971f7defbf4984f Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Jo=C3=A3o=20Paulo=20Rechi=20Vita?= <jprvita@endlessm.com>
+Date: Mon, 15 Oct 2018 17:05:27 -0700
+Subject: [PATCH 2/7] daemon: Consider pending-charge when calculating the
+ display state
+
+Without this change if all batteries in the system are in the
+pending-charge state, the display device state is set to unknown, and
+its icon to battery-missing-symbolic.
+
+This change makes the pending-charge state be considered when
+calculating the DisplayDevice state, setting it to pending-charge if at
+least one battery in the system is pending-charge and no other is
+charging or discharging.
+
+Closes: #81
+Closes: #19
+---
+ src/up-daemon.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/src/up-daemon.c b/src/up-daemon.c
+index 95fff6b..690f379 100644
+--- a/src/up-daemon.c
++++ b/src/up-daemon.c
+@@ -210,14 +210,18 @@ up_daemon_update_display_battery (UpDaemon *daemon)
+ 			continue;
+ 
+ 		/* If one battery is charging, the composite is charging
+-		 * If all batteries are discharging, the composite is discharging
++		 * If all batteries are discharging or pending-charge, the composite is discharging
+ 		 * If all batteries are fully charged, the composite is fully charged
++		 * If one battery is pending-charge and no other is charging or discharging, then the composite is pending-charge
+ 		 * Everything else is unknown */
+ 		if (state == UP_DEVICE_STATE_CHARGING)
+ 			state_total = UP_DEVICE_STATE_CHARGING;
+ 		else if (state == UP_DEVICE_STATE_DISCHARGING &&
+ 			 state_total != UP_DEVICE_STATE_CHARGING)
+ 			state_total = UP_DEVICE_STATE_DISCHARGING;
++		else if (state == UP_DEVICE_STATE_PENDING_CHARGE &&
++			 (state_total == UP_DEVICE_STATE_UNKNOWN || state_total == UP_DEVICE_STATE_PENDING_CHARGE))
++			state_total = UP_DEVICE_STATE_PENDING_CHARGE;
+ 		else if (state == UP_DEVICE_STATE_FULLY_CHARGED &&
+ 			 state_total == UP_DEVICE_STATE_UNKNOWN)
+ 			state_total = UP_DEVICE_STATE_FULLY_CHARGED;
+-- 
+2.38.1
+
+
+From 4420273ca55a6f6e97dd5075bca63e8a012c8794 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Jo=C3=A3o=20Paulo=20Rechi=20Vita?= <jprvita@endlessm.com>
+Date: Fri, 2 Nov 2018 09:49:33 -0700
+Subject: [PATCH 3/7] integration-test: Define PENDING_CHARGE and
+ PENDING_DISCHARGE states
+
+Add definitions for UP_DEVICE_STATE_PENDING_CHARGE and
+UP_DEVICE_STATE_PENDING_DISCHARGE.
+---
+ src/linux/integration-test | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/src/linux/integration-test b/src/linux/integration-test
+index 81064dd..fbd95da 100755
+--- a/src/linux/integration-test
++++ b/src/linux/integration-test
+@@ -60,7 +60,9 @@ BATTERY_IFACE = 'org.bluez.Battery1'
+  UP_DEVICE_STATE_CHARGING,
+  UP_DEVICE_STATE_DISCHARGING,
+  UP_DEVICE_STATE_EMPTY,
+- UP_DEVICE_STATE_FULLY_CHARGED) = (0, 1, 2, 3, 4)
++ UP_DEVICE_STATE_FULLY_CHARGED,
++ UP_DEVICE_STATE_PENDING_CHARGE,
++ UP_DEVICE_STATE_PENDING_DISCHARGE) = (0, 1, 2, 3, 4, 5, 6)
+ 
+ (UP_DEVICE_LEVEL_UNKNOWN,
+  UP_DEVICE_LEVEL_NONE,
+-- 
+2.38.1
+
+
+From ec968accf4038a48a1bc8a1a8c177a7550739233 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Jo=C3=A3o=20Paulo=20Rechi=20Vita?= <jprvita@endlessm.com>
+Date: Fri, 2 Nov 2018 09:55:22 -0700
+Subject: [PATCH 4/7] integration-test: Test DisplayDevice pending-charge
+
+Test relaying the pending-charge state to the DisplayDevice. This commit
+adds three tests: only one battery pending-charge, one battery
+pending-charge and another one discharging, and one battery
+pending-charge and another one charging.
+---
+ src/linux/integration-test | 72 ++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 72 insertions(+)
+
+diff --git a/src/linux/integration-test b/src/linux/integration-test
+index fbd95da..ad6dade 100755
+--- a/src/linux/integration-test
++++ b/src/linux/integration-test
+@@ -491,6 +491,78 @@ class Tests(dbusmock.DBusTestCase):
+         self.assertEqual(self.get_dbus_display_property('WarningLevel'), UP_DEVICE_LEVEL_NONE)
+         self.stop_daemon()
+ 
++    def test_display_pending_charge_one_battery(self):
++        '''One battery pending-charge'''
++
++        self.testbed.add_device('power_supply', 'BAT0', None,
++                                ['type', 'Battery',
++                                 'present', '1',
++                                 'status', 'Not charging',
++                                 'charge_full', '10500000',
++                                 'charge_full_design', '11000000',
++                                 'capacity', '40',
++                                 'voltage_now', '12000000'], [])
++
++        self.start_daemon()
++        devs = self.proxy.EnumerateDevices()
++        self.assertEqual(len(devs), 1)
++        self.assertEqual(self.get_dbus_display_property('State'), UP_DEVICE_STATE_PENDING_CHARGE)
++        self.stop_daemon()
++
++    def test_display_pending_charge_other_battery_discharging(self):
++        '''One battery pending-charge and another one discharging'''
++
++        self.testbed.add_device('power_supply', 'BAT0', None,
++                                ['type', 'Battery',
++                                 'present', '1',
++                                 'status', 'Not charging',
++                                 'charge_full', '10500000',
++                                 'charge_full_design', '11000000',
++                                 'capacity', '40',
++                                 'voltage_now', '12000000'], [])
++        self.testbed.add_device('power_supply', 'BAT1', None,
++                                ['type', 'Battery',
++                                 'present', '1',
++                                 'status', 'Discharging',
++                                 'charge_full', '10500000',
++                                 'charge_full_design', '11000000',
++                                 'capacity', '40',
++                                 'voltage_now', '12000000'], [])
++
++
++        self.start_daemon()
++        devs = self.proxy.EnumerateDevices()
++        self.assertEqual(len(devs), 2)
++        self.assertEqual(self.get_dbus_display_property('State'), UP_DEVICE_STATE_DISCHARGING)
++        self.stop_daemon()
++
++    def test_display_pending_charge_other_battery_charging(self):
++        '''One battery pending-charge and another one charging'''
++
++        self.testbed.add_device('power_supply', 'BAT0', None,
++                                ['type', 'Battery',
++                                 'present', '1',
++                                 'status', 'Not charging',
++                                 'charge_full', '10500000',
++                                 'charge_full_design', '11000000',
++                                 'capacity', '40',
++                                 'voltage_now', '12000000'], [])
++        self.testbed.add_device('power_supply', 'BAT1', None,
++                                ['type', 'Battery',
++                                 'present', '1',
++                                 'status', 'Charging',
++                                 'charge_full', '10500000',
++                                 'charge_full_design', '11000000',
++                                 'capacity', '40',
++                                 'voltage_now', '12000000'], [])
++
++
++        self.start_daemon()
++        devs = self.proxy.EnumerateDevices()
++        self.assertEqual(len(devs), 2)
++        self.assertEqual(self.get_dbus_display_property('State'), UP_DEVICE_STATE_CHARGING)
++        self.stop_daemon()
++
+     def test_battery_charge(self):
+         '''battery which reports charge instead of energy
+ 
+-- 
+2.38.1
+
+
+From 9318e73c8cd55522829970a74dc9d6ca59e4f828 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Jo=C3=A3o=20Paulo=20Rechi=20Vita?= <jprvita@endlessm.com>
+Date: Fri, 2 Nov 2018 16:05:21 -0700
+Subject: [PATCH 5/7] linux: Don't set out_state before state is final
+
+Currently up_device_supply_refresh_battery sets out_state before the
+state value is definitive, so the wrong state value is returned to the
+caller. Luckily the only caller does not make use of this value at the
+moment, so there are no user-visible consequences. Nonetheless this is a
+bug, so this commit fixes it.
+---
+ src/linux/up-device-supply.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/linux/up-device-supply.c b/src/linux/up-device-supply.c
+index 11a14e1..993cf12 100644
+--- a/src/linux/up-device-supply.c
++++ b/src/linux/up-device-supply.c
+@@ -664,7 +664,6 @@ up_device_supply_refresh_battery (UpDeviceSupply *supply,
+ 	}
+ 
+ 	state = up_device_supply_get_state (native_path);
+-	*out_state = state;
+ 
+ 	/* reset unknown counter */
+ 	if (state != UP_DEVICE_STATE_UNKNOWN) {
+@@ -834,6 +833,8 @@ up_device_supply_refresh_battery (UpDeviceSupply *supply,
+ 		supply->priv->energy_old_first = 0;
+ 	}
+ 
++	*out_state = state;
++
+ 	g_object_set (device,
+ 		      "energy", energy,
+ 		      "energy-full", energy_full,
+-- 
+2.38.1
+
+
+From ebea310f15cb61a3f5558800a45951d3c885201d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Jo=C3=A3o=20Paulo=20Rechi=20Vita?= <jprvita@endlessm.com>
+Date: Mon, 26 Nov 2018 13:12:18 -0800
+Subject: [PATCH 6/7] linux: Map pending-charge to fully-charged when charge is
+ 100%
+
+Some devices report "Not charging" when the battery is full and AC power
+is connected. In this situation we should report fully-charged instead
+of pending-charge.
+
+Closes: #86.
+---
+ src/linux/up-device-supply.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/src/linux/up-device-supply.c b/src/linux/up-device-supply.c
+index 993cf12..42971da 100644
+--- a/src/linux/up-device-supply.c
++++ b/src/linux/up-device-supply.c
+@@ -733,6 +733,12 @@ up_device_supply_refresh_battery (UpDeviceSupply *supply,
+ 		percentage = CLAMP(percentage, 0.0f, 100.0f);
+ 	}
+ 
++	/* Some devices report "Not charging" when the battery is full and AC
++	 * power is connected. In this situation we should report fully-charged
++	 * instead of pending-charge. */
++	if (state == UP_DEVICE_STATE_PENDING_CHARGE && percentage == 100.0)
++		state = UP_DEVICE_STATE_FULLY_CHARGED;
++
+ 	/* the battery isn't charging or discharging, it's just
+ 	 * sitting there half full doing nothing: try to guess a state */
+ 	if (state == UP_DEVICE_STATE_UNKNOWN && supply->priv->is_power_supply) {
+-- 
+2.38.1
+
+
+From b327348ac160b57430ba4d2662835513ea35c08c Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Jo=C3=A3o=20Paulo=20Rechi=20Vita?= <jprvita@endlessm.com>
+Date: Mon, 26 Nov 2018 13:13:00 -0800
+Subject: [PATCH 7/7] integration-test: Test mapping pending-charge to
+ fully-charged
+
+---
+ src/linux/integration-test | 25 +++++++++++++++++++++++++
+ 1 file changed, 25 insertions(+)
+
+diff --git a/src/linux/integration-test b/src/linux/integration-test
+index ad6dade..c6fb5c0 100755
+--- a/src/linux/integration-test
++++ b/src/linux/integration-test
+@@ -563,6 +563,31 @@ class Tests(dbusmock.DBusTestCase):
+         self.assertEqual(self.get_dbus_display_property('State'), UP_DEVICE_STATE_CHARGING)
+         self.stop_daemon()
+ 
++    def test_map_pending_charge_to_fully_charged(self):
++        '''Map pending-charge to fully-charged'''
++
++        bat0 = self.testbed.add_device('power_supply', 'BAT0', None,
++                                       ['type', 'Battery',
++                                        'present', '1',
++                                        'status', 'Not charging',
++                                        'charge_full', '10500000',
++                                        'charge_full_design', '11000000',
++                                        'capacity', '100',
++                                        'voltage_now', '12000000'], [])
++
++        self.start_daemon()
++        devs = self.proxy.EnumerateDevices()
++        self.assertEqual(len(devs), 1)
++        bat0_up = devs[0]
++        self.assertEqual(self.get_dbus_dev_property(bat0_up, 'State'), UP_DEVICE_STATE_FULLY_CHARGED)
++        self.stop_daemon()
++
++        # and make sure we still return pending-charge below 100%
++        self.testbed.set_attribute(bat0, 'capacity', '99')
++        self.start_daemon()
++        self.assertEqual(self.get_dbus_dev_property(bat0_up, 'State'), UP_DEVICE_STATE_PENDING_CHARGE)
++        self.stop_daemon()
++
+     def test_battery_charge(self):
+         '''battery which reports charge instead of energy
+ 
+-- 
+2.38.1
+
